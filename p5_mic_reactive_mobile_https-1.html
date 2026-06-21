@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="theme-color" content="#05060a" />
+  <title>Mic Reactive Field - p5.js Mobile</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #05060a;
+      --panel: rgba(8, 10, 18, 0.82);
+      --border: rgba(255,255,255,0.16);
+      --text: rgba(255,255,255,0.94);
+      --muted: rgba(255,255,255,0.66);
+      --danger: rgba(255,135,150,0.95);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    canvas {
+      display: block;
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #startPanel {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding:
+        calc(18px + var(--safe-top))
+        calc(16px + var(--safe-right))
+        calc(18px + var(--safe-bottom))
+        calc(16px + var(--safe-left));
+      background:
+        radial-gradient(circle at 50% 24%, rgba(84,132,255,0.25), transparent 38%),
+        radial-gradient(circle at 18% 80%, rgba(198,118,255,0.16), transparent 32%),
+        linear-gradient(180deg, rgba(5,6,10,0.28), rgba(5,6,10,0.92));
+      backdrop-filter: blur(9px);
+    }
+
+    #card {
+      width: min(720px, 100%);
+      max-height: calc(100vh - 36px - var(--safe-top) - var(--safe-bottom));
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 22px;
+      background: var(--panel);
+      box-shadow: 0 22px 80px rgba(0,0,0,0.55);
+      -webkit-overflow-scrolling: touch;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(25px, 8vw, 42px);
+      line-height: 1.04;
+      letter-spacing: -0.055em;
+    }
+
+    p {
+      margin: 10px 0;
+      color: var(--muted);
+      line-height: 1.72;
+      font-size: 14px;
+    }
+
+    #envBox {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.075);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .buttonGrid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    @media (min-width: 560px) {
+      .buttonGrid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 18px;
+      min-height: 54px;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.2;
+      color: #07111f;
+      background: linear-gradient(135deg, #ffffff, #9ec7ff 52%, #c8a7ff);
+      box-shadow: 0 12px 38px rgba(120,170,255,0.25);
+      cursor: pointer;
+      user-select: none;
+      text-align: center;
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: rgba(255,255,255,0.08);
+      box-shadow: none;
+    }
+
+    button:active, .touchButton:active {
+      transform: translateY(1px) scale(0.99);
+    }
+
+    .error {
+      margin-top: 12px;
+      color: var(--danger);
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    #topHud {
+      position: fixed;
+      top: calc(10px + var(--safe-top));
+      left: calc(10px + var(--safe-left));
+      right: calc(10px + var(--safe-right));
+      z-index: 8;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #status {
+      flex: 1;
+      min-width: 0;
+      padding: 9px 11px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(8,10,18,0.48);
+      backdrop-filter: blur(8px);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #status strong {
+      color: var(--text);
+    }
+
+    #miniMeter {
+      width: 76px;
+      height: 9px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    #miniFill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #80e6ff, #ffffff, #cba5ff);
+    }
+
+    #controls {
+      position: fixed;
+      left: calc(10px + var(--safe-left));
+      right: calc(10px + var(--safe-right));
+      bottom: calc(10px + var(--safe-bottom));
+      z-index: 9;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    #controls.hidden {
+      opacity: 0;
+      transform: translateY(14px);
+      pointer-events: none;
+    }
+
+    .touchButton {
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 16px;
+      min-height: 48px;
+      padding: 10px 5px;
+      background: rgba(8,10,18,0.56);
+      color: var(--text);
+      backdrop-filter: blur(10px);
+      font-size: 11px;
+      font-weight: 750;
+      line-height: 1.2;
+      box-shadow: none;
+    }
+
+    #tapLayer {
+      position: fixed;
+      inset: 0;
+      z-index: 7;
+      pointer-events: auto;
+    }
+
+    .smallText {
+      font-size: 11px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="startPanel">
+    <div id="card">
+      <h1>Mic Reactive Field</h1>
+      <p>
+        スマホのマイク入力に反応するp5.jsビジュアルです。
+        このページをHTTPSで配信すると、iPhone/Androidのブラウザでマイク許可を出せます。
+      </p>
+
+      <div class="buttonGrid">
+        <button id="micButton">マイクで開始</button>
+        <button id="demoButton" class="secondary">デモ表示</button>
+      </div>
+
+      <div id="envBox"></div>
+      <div id="error" class="error"></div>
+    </div>
+  </div>
+
+  <div id="tapLayer"></div>
+
+  <div id="topHud">
+    <div id="status"><strong>READY</strong> source: none / visual: 1</div>
+    <div id="miniMeter"><div id="miniFill"></div></div>
+  </div>
+
+  <div id="controls">
+    <button class="touchButton" id="btnMode">MODE<br><span class="smallText">1</span></button>
+    <button class="touchButton" id="btnReset">RESET</button>
+    <button class="touchButton" id="btnFull">FULL</button>
+    <button class="touchButton" id="btnSave">SAVE</button>
+    <button class="touchButton" id="btnMenu">MENU</button>
+  </div>
+
+  <script>
+    const isTouchDevice = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+    const isSmallScreen = Math.min(window.innerWidth, window.innerHeight) < 720;
+    const lowPowerDefault = isTouchDevice || isSmallScreen;
+
+    let particles = [];
+    let ripples = [];
+    let audioContext = null;
+    let analyser = null;
+    let mediaStream = null;
+    let streamSource = null;
+    let freqData = null;
+    let timeData = null;
+
+    let started = false;
+    let sourceMode = "none";
+    let visualMode = 1;
+    let controlsVisible = true;
+
+    let levelSmooth = 0;
+    let bassSmooth = 0;
+    let midSmooth = 0;
+    let trebleSmooth = 0;
+    let beatCooldown = 0;
+    let timeOffset = 0;
+    let demoPhase = 0;
+
+    const PARTICLE_DESKTOP = 900;
+    const PARTICLE_MOBILE = 440;
+    const FIELD_SCALE = 0.0018;
+    const TARGET_FPS = lowPowerDefault ? 45 : 60;
+
+    const startPanel = document.getElementById("startPanel");
+    const errorEl = document.getElementById("error");
+    const controls = document.getElementById("controls");
+    const statusEl = document.getElementById("status");
+    const miniFill = document.getElementById("miniFill");
+    const envBox = document.getElementById("envBox");
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      pixelDensity(lowPowerDefault ? 1 : Math.min(2, window.devicePixelRatio || 1));
+      frameRate(TARGET_FPS);
+      colorMode(HSB, 360, 100, 100, 100);
+      noStroke();
+      resetParticles();
+      background(230, 45, 5);
+      renderEnv();
+    }
+
+    function draw() {
+      if (!started) {
+        drawIdlePreview();
+        return;
+      }
+
+      analyzeCurrentSource();
+      drawBackgroundTrail();
+      drawParticleField();
+      drawRadialSpectrum();
+      drawRipples();
+      drawCenterCore();
+      updateStatus();
+
+      beatCooldown = Math.max(0, beatCooldown - 1);
+      timeOffset += 0.004 + levelSmooth * 0.036;
+    }
+
+    function renderEnv() {
+      const hasMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+      envBox.innerHTML = [
+        `secureContext: <strong>${window.isSecureContext ? "true" : "false"}</strong>`,
+        `microphone API: <strong>${hasMedia ? "available" : "unavailable"}</strong>`,
+        `protocol: <strong>${location.protocol}</strong>`,
+        `host: <strong>${location.host || "(local file)"}</strong>`
+      ].join("<br>");
+    }
+
+    function ensureAudioContext() {
+      if (!audioContext) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        audioContext = new AudioCtx();
+      }
+
+      if (!analyser) {
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = lowPowerDefault ? 1024 : 2048;
+        analyser.smoothingTimeConstant = 0.84;
+        freqData = new Uint8Array(analyser.frequencyBinCount);
+        timeData = new Uint8Array(analyser.fftSize);
+      }
+
+      return audioContext;
+    }
+
+    async function startMic() {
+      clearError();
+
+      try {
+        if (!window.isSecureContext) {
+          throw new Error("このページは secureContext ではありません。HTTPSで開いてください。");
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("navigator.mediaDevices.getUserMedia が利用できません。ブラウザ設定または配信URLを確認してください。");
+        }
+
+        ensureAudioContext();
+        await audioContext.resume();
+        stopMic();
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          },
+          video: false
+        });
+
+        streamSource = audioContext.createMediaStreamSource(mediaStream);
+        streamSource.connect(analyser);
+
+        sourceMode = "mic";
+        started = true;
+        startPanel.style.display = "none";
+        resetParticles();
+        requestWakeLockSafe();
+      } catch (err) {
+        showError(
+          "マイクを開始できませんでした。\n" +
+          "確認事項：\n" +
+          "1. HTTPSのURLで開いているか\n" +
+          "2. ブラウザでマイク権限を許可したか\n" +
+          "3. iPhoneの場合はSafariまたはChromeで開いているか\n" +
+          "4. Androidの場合はChromeでマイク権限が許可されているか\n\n" +
+          String(err.name ? err.name + ": " : "") + String(err.message || err)
+        );
+        renderEnv();
+      }
+    }
+
+    function startDemo() {
+      clearError();
+      stopMic();
+      sourceMode = "demo";
+      started = true;
+      startPanel.style.display = "none";
+      resetParticles();
+      requestWakeLockSafe();
+    }
+
+    function stopMic() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+
+      if (streamSource) {
+        try { streamSource.disconnect(); } catch (_) {}
+        streamSource = null;
+      }
+    }
+
+    function analyzeCurrentSource() {
+      if (sourceMode === "demo") {
+        analyzeDemo();
+        return;
+      }
+
+      if (!analyser || !freqData || !timeData) {
+        levelSmooth = lerp(levelSmooth, 0, 0.12);
+        bassSmooth = lerp(bassSmooth, 0, 0.10);
+        midSmooth = lerp(midSmooth, 0, 0.10);
+        trebleSmooth = lerp(trebleSmooth, 0, 0.10);
+        return;
+      }
+
+      analyser.getByteFrequencyData(freqData);
+      analyser.getByteTimeDomainData(timeData);
+
+      const rms = calculateRms(timeData);
+      const bass = bandAverage(freqData, 20, 160);
+      const mid = bandAverage(freqData, 400, 2200);
+      const treble = bandAverage(freqData, 3200, 9000);
+
+      levelSmooth = lerp(levelSmooth, rms, 0.24);
+      bassSmooth = lerp(bassSmooth, bass, 0.15);
+      midSmooth = lerp(midSmooth, mid, 0.11);
+      trebleSmooth = lerp(trebleSmooth, treble, 0.09);
+
+      maybeAddRipple();
+    }
+
+    function analyzeDemo() {
+      demoPhase += 0.026;
+      const kick = Math.pow(Math.max(0, Math.sin(demoPhase * 2.1)), 4);
+      const wave = 0.5 + 0.5 * Math.sin(demoPhase * 0.8);
+      const sparkle = 0.5 + 0.5 * Math.sin(demoPhase * 5.7 + Math.sin(demoPhase));
+
+      levelSmooth = lerp(levelSmooth, 0.05 + kick * 0.18 + wave * 0.04, 0.16);
+      bassSmooth = lerp(bassSmooth, 60 + kick * 190, 0.16);
+      midSmooth = lerp(midSmooth, 70 + wave * 120, 0.12);
+      trebleSmooth = lerp(trebleSmooth, 50 + sparkle * 150, 0.10);
+
+      if (!freqData) freqData = new Uint8Array(lowPowerDefault ? 512 : 1024);
+
+      for (let i = 0; i < freqData.length; i++) {
+        const x = i / freqData.length;
+        const v =
+          32 +
+          160 * Math.exp(-Math.pow((x - 0.06 - kick * 0.02) / 0.045, 2)) * kick +
+          90 * Math.exp(-Math.pow((x - 0.22 - wave * 0.04) / 0.09, 2)) * wave +
+          70 * Math.exp(-Math.pow((x - 0.60) / 0.18, 2)) * sparkle;
+        freqData[i] = constrain(v + random(-8, 8), 0, 255);
+      }
+
+      maybeAddRipple();
+    }
+
+    function calculateRms(data) {
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      return Math.sqrt(sum / data.length);
+    }
+
+    function bandAverage(data, lowHz, highHz) {
+      const sampleRate = audioContext ? audioContext.sampleRate : 44100;
+      const nyquist = sampleRate / 2;
+      const start = Math.max(0, Math.floor((lowHz / nyquist) * data.length));
+      const end = Math.min(data.length - 1, Math.ceil((highHz / nyquist) * data.length));
+
+      let sum = 0;
+      let count = 0;
+      for (let i = start; i <= end; i++) {
+        sum += data[i];
+        count++;
+      }
+      return count ? sum / count : 0;
+    }
+
+    function maybeAddRipple() {
+      const bassNorm = bassSmooth / 255;
+      const threshold = lowPowerDefault ? 0.62 : 0.58;
+
+      if (bassNorm > threshold && beatCooldown === 0) {
+        ripples.push({
+          x: width / 2 + random(-width * 0.14, width * 0.14),
+          y: height / 2 + random(-height * 0.12, height * 0.12),
+          radius: 8,
+          speed: 5 + bassNorm * 22,
+          life: 88,
+          hue: (200 + random(120)) % 360
+        });
+        beatCooldown = Math.floor(map(bassNorm, threshold, 1, 24, 8, true));
+      }
+    }
+
+    function drawIdlePreview() {
+      background(225, 50, 4, 100);
+
+      push();
+      translate(width / 2, height / 2);
+      const t = frameCount * 0.011;
+      const count = lowPowerDefault ? 130 : 240;
+
+      blendMode(ADD);
+      for (let i = 0; i < count; i++) {
+        const a = i * 0.24 + t;
+        const r = 28 + i * (lowPowerDefault ? 2.1 : 1.6) + sin(t + i * 0.09) * 22;
+        const x = cos(a) * r;
+        const y = sin(a) * r;
+        fill((195 + i * 0.6) % 360, 65, 86, 14);
+        circle(x, y, 2 + sin(t * 2 + i) * 1.2);
+      }
+      blendMode(BLEND);
+      pop();
+    }
+
+    function drawBackgroundTrail() {
+      const levelNorm = constrain(levelSmooth * 8, 0, 1);
+      const bassNorm = bassSmooth / 255;
+
+      blendMode(BLEND);
+      if (visualMode === 1) {
+        fill(230, 55, 4, lowPowerDefault ? 18 : 12 + levelNorm * 8);
+      } else if (visualMode === 2) {
+        fill(260, 35, 3, lowPowerDefault ? 22 : 18);
+      } else {
+        fill(210 + bassNorm * 50, 70, 3, lowPowerDefault ? 16 : 10);
+      }
+      rect(0, 0, width, height);
+    }
+
+    function drawParticleField() {
+      const bassNorm = bassSmooth / 255;
+      const midNorm = midSmooth / 255;
+      const trebleNorm = trebleSmooth / 255;
+      const levelNorm = constrain(levelSmooth * 8, 0, 1);
+
+      blendMode(ADD);
+
+      for (const p of particles) {
+        const dx = p.x - width / 2;
+        const dy = p.y - height / 2;
+        const distToCenter = Math.sqrt(dx * dx + dy * dy) + 0.001;
+
+        let angle;
+        if (visualMode === 1) {
+          angle = noise(p.x * FIELD_SCALE, p.y * FIELD_SCALE, timeOffset) * TAU * 3.4;
+        } else if (visualMode === 2) {
+          angle = atan2(dy, dx) + HALF_PI + noise(p.x * 0.003, p.y * 0.003, timeOffset) * 1.4;
+        } else {
+          angle = atan2(dy, dx) + sin(timeOffset * 8 + distToCenter * 0.012) * 1.8;
+        }
+
+        const pull = map(bassNorm, 0, 1, -0.35, 0.88);
+        const speed = p.baseSpeed + levelNorm * 8 + bassNorm * 4.5 + trebleNorm * 1.8;
+
+        p.vx = lerp(p.vx, cos(angle) * speed + (dx / distToCenter) * pull, 0.07);
+        p.vy = lerp(p.vy, sin(angle) * speed + (dy / distToCenter) * pull, 0.07);
+
+        p.x += p.vx;
+        p.y += p.vy;
+
+        if (p.x < -30 || p.x > width + 30 || p.y < -30 || p.y > height + 30) {
+          respawnParticle(p);
+        }
+
+        const hue = (p.hue + bassNorm * 80 + frameCount * 0.04) % 360;
+        const sat = 45 + trebleNorm * 55;
+        const bri = 42 + midNorm * 36 + levelNorm * 22;
+        const alpha = lowPowerDefault
+          ? 8 + levelNorm * 20 + trebleNorm * 10
+          : 6 + levelNorm * 20 + trebleNorm * 14;
+
+        stroke(hue, sat, bri, alpha);
+        strokeWeight(p.weight + levelNorm * (lowPowerDefault ? 1.5 : 1.9));
+        line(p.x, p.y, p.x - p.vx * 2.0, p.y - p.vy * 2.0);
+      }
+
+      blendMode(BLEND);
+      noStroke();
+    }
+
+    function drawRadialSpectrum() {
+      if (!freqData) return;
+
+      const bassNorm = bassSmooth / 255;
+      const radius = Math.min(width, height) * (0.19 + bassNorm * 0.06);
+      const bars = lowPowerDefault ? 92 : 160;
+
+      push();
+      translate(width / 2, height / 2);
+      blendMode(ADD);
+      noFill();
+
+      for (let i = 0; i < bars; i++) {
+        const idx = Math.floor(map(i, 0, bars, 0, freqData.length * 0.62));
+        const amp = freqData[idx] / 255;
+        const a = map(i, 0, bars, -PI, PI);
+        const len = 8 + amp * Math.min(width, height) * 0.18;
+
+        const x1 = cos(a) * radius;
+        const y1 = sin(a) * radius;
+        const x2 = cos(a) * (radius + len);
+        const y2 = sin(a) * (radius + len);
+
+        stroke((185 + i * 1.1 + bassNorm * 70) % 360, 72, 92, 18 + amp * 54);
+        strokeWeight(1 + amp * (lowPowerDefault ? 3.0 : 3.8));
+        line(x1, y1, x2, y2);
+      }
+
+      blendMode(BLEND);
+      pop();
+      noStroke();
+    }
+
+    function drawRipples() {
+      blendMode(ADD);
+      noFill();
+
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        const alpha = map(r.life, 0, 88, 0, 50);
+
+        stroke(r.hue, 70, 96, alpha);
+        strokeWeight(2.2);
+        circle(r.x, r.y, r.radius * 2);
+
+        if (!lowPowerDefault) {
+          stroke((r.hue + 38) % 360, 54, 100, alpha * 0.45);
+          strokeWeight(8);
+          circle(r.x, r.y, r.radius * 1.9);
+        }
+
+        r.radius += r.speed;
+        r.life -= 2.8;
+
+        if (r.life <= 0) ripples.splice(i, 1);
+      }
+
+      blendMode(BLEND);
+      noStroke();
+    }
+
+    function drawCenterCore() {
+      const bassNorm = bassSmooth / 255;
+      const midNorm = midSmooth / 255;
+      const trebleNorm = trebleSmooth / 255;
+      const levelNorm = constrain(levelSmooth * 8, 0, 1);
+
+      push();
+      translate(width / 2, height / 2);
+      blendMode(ADD);
+
+      const loops = lowPowerDefault ? 5 : 8;
+      for (let i = loops; i >= 0; i--) {
+        const d = Math.min(width, height) * (0.05 + i * 0.021 + bassNorm * 0.07);
+        fill((205 + i * 12 + trebleNorm * 80) % 360, 55 + midNorm * 35, 85, 5 + levelNorm * 6);
+        circle(0, 0, d);
+      }
+
+      const pulse = Math.min(width, height) * (0.038 + bassNorm * 0.048);
+      fill(198 + bassNorm * 70, 28 + trebleNorm * 55, 100, 66);
+      circle(0, 0, pulse);
+
+      blendMode(BLEND);
+      pop();
+    }
+
+    function resetParticles() {
+      const base = lowPowerDefault ? PARTICLE_MOBILE : PARTICLE_DESKTOP;
+      const count = Math.floor(base * constrain((windowWidth * windowHeight) / (390 * 844), 0.75, lowPowerDefault ? 1.5 : 3.0));
+
+      particles = [];
+      for (let i = 0; i < count; i++) {
+        const p = {};
+        respawnParticle(p, true);
+        particles.push(p);
+      }
+    }
+
+    function respawnParticle(p, anywhere = false) {
+      if (anywhere) {
+        p.x = random(width);
+        p.y = random(height);
+      } else {
+        const edge = floor(random(4));
+        if (edge === 0) { p.x = random(width); p.y = -20; }
+        if (edge === 1) { p.x = width + 20; p.y = random(height); }
+        if (edge === 2) { p.x = random(width); p.y = height + 20; }
+        if (edge === 3) { p.x = -20; p.y = random(height); }
+      }
+
+      p.vx = random(-1, 1);
+      p.vy = random(-1, 1);
+      p.baseSpeed = random(0.35, 1.65);
+      p.weight = random(0.55, lowPowerDefault ? 1.55 : 1.7);
+      p.hue = random(185, 300);
+    }
+
+    function updateStatus() {
+      const levelNorm = constrain(levelSmooth * 8, 0, 1);
+      miniFill.style.width = `${Math.round(levelNorm * 100)}%`;
+      statusEl.innerHTML = `<strong>${sourceMode.toUpperCase()}</strong> visual: ${visualMode} / vol: ${levelSmooth.toFixed(2)} / particles: ${particles.length}`;
+      document.querySelector("#btnMode .smallText").textContent = String(visualMode);
+    }
+
+    function toggleControls() {
+      controlsVisible = !controlsVisible;
+      controls.classList.toggle("hidden", !controlsVisible);
+    }
+
+    function openMenu() {
+      startPanel.style.display = "grid";
+      controlsVisible = true;
+      controls.classList.remove("hidden");
+      renderEnv();
+    }
+
+    function showError(message) {
+      errorEl.textContent = message;
+    }
+
+    function clearError() {
+      errorEl.textContent = "";
+    }
+
+    async function requestWakeLockSafe() {
+      try {
+        if ("wakeLock" in navigator) {
+          await navigator.wakeLock.request("screen");
+        }
+      } catch (_) {}
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      resetParticles();
+      background(230, 45, 5);
+    }
+
+    function keyPressed() {
+      if (key === "f" || key === "F") toggleFullscreen();
+      else if (key === "r" || key === "R") resetParticles();
+      else if (key === "s" || key === "S") saveCanvas("mic-reactive-mobile", "png");
+      else if (key === "1") visualMode = 1;
+      else if (key === "2") visualMode = 2;
+      else if (key === "3") visualMode = 3;
+    }
+
+    function toggleFullscreen() {
+      fullscreen(!fullscreen());
+    }
+
+    function nextMode() {
+      visualMode += 1;
+      if (visualMode > 3) visualMode = 1;
+    }
+
+    document.getElementById("micButton").addEventListener("click", startMic);
+    document.getElementById("demoButton").addEventListener("click", startDemo);
+
+    document.getElementById("btnMode").addEventListener("click", (e) => {
+      e.stopPropagation();
+      nextMode();
+    });
+
+    document.getElementById("btnReset").addEventListener("click", (e) => {
+      e.stopPropagation();
+      resetParticles();
+    });
+
+    document.getElementById("btnFull").addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFullscreen();
+    });
+
+    document.getElementById("btnSave").addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveCanvas("mic-reactive-mobile", "png");
+    });
+
+    document.getElementById("btnMenu").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMenu();
+    });
+
+    document.getElementById("tapLayer").addEventListener("click", () => {
+      if (started) toggleControls();
+    });
+
+    window.addEventListener("orientationchange", () => {
+      setTimeout(() => {
+        resizeCanvas(windowWidth, windowHeight);
+        resetParticles();
+      }, 360);
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && audioContext) {
+        audioContext.resume().catch(() => {});
+      }
+    });
+  </script>
+</body>
+</html>
