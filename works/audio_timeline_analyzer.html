@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="theme-color" content="#05060a" />
+  <title>Audio Timeline Analyzer</title>
+
+  <!--
+    Audio Timeline Analyzer
+    - p5.js不使用。Canvas 2D + Web Audio API
+    - スマホ対応
+    - マイク / 音声ファイル / デモ入力
+    - 表示:
+      1. 現在の生波形 oscilloscope
+      2. 時間経過の音量 envelope
+      3. 時間経過の周波数スペクトログラム spectrogram
+      4. bass / mid / treble / peak / rms メーター
+    - マイク入力はHTTPS配信推奨。Cloudflare Workers同梱版。
+  -->
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #05060a;
+      --panel: rgba(8, 10, 18, 0.78);
+      --panel2: rgba(255,255,255,0.075);
+      --border: rgba(255,255,255,0.16);
+      --text: rgba(255,255,255,0.94);
+      --muted: rgba(255,255,255,0.66);
+      --danger: rgba(255,135,150,0.95);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #startPanel {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding:
+        calc(18px + var(--safe-top))
+        calc(16px + var(--safe-right))
+        calc(18px + var(--safe-bottom))
+        calc(16px + var(--safe-left));
+      background:
+        radial-gradient(circle at 50% 18%, rgba(72,132,255,0.24), transparent 38%),
+        radial-gradient(circle at 18% 80%, rgba(198,118,255,0.15), transparent 34%),
+        linear-gradient(180deg, rgba(5,6,10,0.35), rgba(5,6,10,0.93));
+      backdrop-filter: blur(10px);
+    }
+
+    #card {
+      width: min(820px, 100%);
+      max-height: calc(100vh - 36px - var(--safe-top) - var(--safe-bottom));
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 22px;
+      background: var(--panel);
+      box-shadow: 0 22px 80px rgba(0,0,0,0.55);
+      -webkit-overflow-scrolling: touch;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(25px, 7vw, 44px);
+      line-height: 1.04;
+      letter-spacing: -0.055em;
+    }
+
+    p {
+      margin: 10px 0;
+      color: var(--muted);
+      line-height: 1.72;
+      font-size: 14px;
+    }
+
+    .buttonGrid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    @media (min-width: 620px) {
+      .buttonGrid {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+    }
+
+    button, label.fileButton {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 18px;
+      min-height: 54px;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.2;
+      color: #07111f;
+      background: linear-gradient(135deg, #ffffff, #9ec7ff 52%, #c8a7ff);
+      box-shadow: 0 12px 38px rgba(120,170,255,0.25);
+      cursor: pointer;
+      user-select: none;
+      text-align: center;
+    }
+
+    button.secondary, label.fileButton.secondary {
+      color: var(--text);
+      background: rgba(255,255,255,0.08);
+      box-shadow: none;
+    }
+
+    button:active, label.fileButton:active, .touchButton:active {
+      transform: translateY(1px) scale(0.99);
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .note, #envBox {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: var(--panel2);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .error {
+      margin-top: 12px;
+      color: var(--danger);
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    #topHud {
+      position: fixed;
+      top: calc(10px + var(--safe-top));
+      left: calc(10px + var(--safe-left));
+      right: calc(10px + var(--safe-right));
+      z-index: 8;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #status {
+      flex: 1;
+      min-width: 0;
+      padding: 9px 11px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(8,10,18,0.54);
+      backdrop-filter: blur(8px);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #status strong {
+      color: var(--text);
+    }
+
+    #miniMeter {
+      width: 84px;
+      height: 9px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    #miniFill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #70e0ff, #ffffff, #cba5ff);
+    }
+
+    #controls {
+      position: fixed;
+      left: calc(10px + var(--safe-left));
+      right: calc(10px + var(--safe-right));
+      bottom: calc(10px + var(--safe-bottom));
+      z-index: 12;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 7px;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    #controls.hidden {
+      opacity: 0;
+      transform: translateY(14px);
+      pointer-events: none;
+    }
+
+    .touchButton {
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 15px;
+      min-height: 48px;
+      padding: 9px 4px;
+      background: rgba(8,10,18,0.60);
+      color: var(--text);
+      backdrop-filter: blur(10px);
+      font-size: 10.5px;
+      font-weight: 750;
+      line-height: 1.15;
+      box-shadow: none;
+    }
+
+    #audioEl {
+      position: fixed;
+      left: calc(10px + var(--safe-left));
+      right: calc(10px + var(--safe-right));
+      bottom: calc(68px + var(--safe-bottom));
+      z-index: 14;
+      width: calc(100vw - 20px - var(--safe-left) - var(--safe-right));
+      display: none;
+    }
+
+    #tapLayer {
+      position: fixed;
+      inset: 0;
+      z-index: 7;
+      pointer-events: auto;
+    }
+
+    .smallText {
+      font-size: 10px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="startPanel">
+    <div id="card">
+      <h1>Audio Timeline Analyzer</h1>
+      <p>
+        音の「現在の波形」と「時間経過」を同時に見るための画面です。
+        上段は現在の生波形、中段は周波数の時間変化、下段は音量・低音・中音・高音の推移です。
+      </p>
+
+      <div class="buttonGrid">
+        <button id="micButton">マイクで開始</button>
+        <label for="fileInput" class="fileButton">音声ファイルで開始</label>
+        <button id="demoButton" class="secondary">デモ表示</button>
+      </div>
+
+      <input id="fileInput" type="file" accept="audio/*" />
+
+      <div class="note">
+        マイク入力はHTTPS配信推奨です。Cloudflare Workersなどで配信するとスマホでもマイク許可が出せます。
+        HTMLを直接開く場合は音声ファイルまたはデモ表示を使ってください。
+      </div>
+
+      <div id="envBox"></div>
+      <div id="error" class="error"></div>
+    </div>
+  </div>
+
+  <div id="tapLayer"></div>
+
+  <div id="topHud">
+    <div id="status"><strong>READY</strong> source: none / span: 60s</div>
+    <div id="miniMeter"><div id="miniFill"></div></div>
+  </div>
+
+  <div id="controls">
+    <button class="touchButton" id="btnPause">PAUSE</button>
+    <button class="touchButton" id="btnSpan">SPAN<br><span class="smallText">60s</span></button>
+    <button class="touchButton" id="btnClear">CLEAR</button>
+    <button class="touchButton" id="btnFull">FULL</button>
+    <button class="touchButton" id="btnSave">SAVE</button>
+    <button class="touchButton" id="btnMenu">MENU</button>
+  </div>
+
+  <audio id="audioEl" controls playsinline></audio>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d", { alpha: false });
+
+    const isTouchDevice = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+    const isSmallScreen = Math.min(window.innerWidth, window.innerHeight) < 720;
+    const lowPower = isTouchDevice || isSmallScreen;
+
+    const dpr = lowPower ? 1 : Math.min(2, window.devicePixelRatio || 1);
+    const sampleFps = lowPower ? 20 : 30;
+    const fftSize = lowPower ? 1024 : 2048;
+    const bands = lowPower ? 64 : 96;
+
+    let width = 0;
+    let height = 0;
+
+    let audioContext = null;
+    let analyser = null;
+    let mediaStream = null;
+    let streamSource = null;
+    let mediaElementSource = null;
+    let freqData = null;
+    let timeData = null;
+
+    let started = false;
+    let paused = false;
+    let sourceMode = "none";
+    let controlsVisible = true;
+    let timeSpanOptions = [30, 60, 120];
+    let timeSpanIndex = 1;
+    let timeSpanSeconds = timeSpanOptions[timeSpanIndex];
+
+    let history = [];
+    let maxHistory = sampleFps * timeSpanSeconds;
+    let lastSampleTime = 0;
+    let startTime = 0;
+    let elapsed = 0;
+
+    let smoothedRms = 0;
+    let smoothedPeak = 0;
+    let smoothedBass = 0;
+    let smoothedMid = 0;
+    let smoothedTreble = 0;
+
+    let demoPhase = 0;
+    let wakeLock = null;
+
+    const startPanel = document.getElementById("startPanel");
+    const errorEl = document.getElementById("error");
+    const envBox = document.getElementById("envBox");
+    const statusEl = document.getElementById("status");
+    const miniFill = document.getElementById("miniFill");
+    const controls = document.getElementById("controls");
+    const audioEl = document.getElementById("audioEl");
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function init() {
+      resize();
+      renderEnv();
+      clearHistory();
+      requestAnimationFrame(loop);
+    }
+
+    function renderEnv() {
+      const hasMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+      envBox.innerHTML = [
+        `secureContext: <strong>${window.isSecureContext ? "true" : "false"}</strong>`,
+        `microphone API: <strong>${hasMedia ? "available" : "unavailable"}</strong>`,
+        `protocol: <strong>${location.protocol}</strong>`,
+        `host: <strong>${location.host || "(local file)"}</strong>`,
+        `mode: <strong>${lowPower ? "mobile/low-power" : "desktop"}</strong>`
+      ].join("<br>");
+    }
+
+    function ensureAudioContext() {
+      if (!audioContext) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        audioContext = new AudioCtx();
+      }
+
+      if (!analyser) {
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = fftSize;
+        analyser.smoothingTimeConstant = 0.78;
+        freqData = new Uint8Array(analyser.frequencyBinCount);
+        timeData = new Uint8Array(analyser.fftSize);
+      }
+
+      return audioContext;
+    }
+
+    async function startMic() {
+      clearError();
+
+      try {
+        if (!window.isSecureContext) {
+          throw new Error("このページはsecureContextではありません。スマホのマイク利用にはHTTPS配信が必要です。");
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("getUserMediaが利用できません。ブラウザまたは権限設定を確認してください。");
+        }
+
+        ensureAudioContext();
+        await audioContext.resume();
+        stopInputsOnly();
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          },
+          video: false
+        });
+
+        streamSource = audioContext.createMediaStreamSource(mediaStream);
+        streamSource.connect(analyser);
+
+        sourceMode = "mic";
+        begin();
+      } catch (err) {
+        showError(
+          "マイクを開始できませんでした。\n\n" +
+          "確認事項：\n" +
+          "1. HTTPSのURLで開いているか\n" +
+          "2. ブラウザでマイク権限を許可したか\n" +
+          "3. iPhoneはSafari/Chrome、AndroidはChromeで試したか\n\n" +
+          String(err.name ? err.name + ": " : "") + String(err.message || err)
+        );
+        renderEnv();
+      }
+    }
+
+    async function startAudioFile(file) {
+      clearError();
+      if (!file) return;
+
+      try {
+        ensureAudioContext();
+        await audioContext.resume();
+        stopInputsOnly();
+
+        const url = URL.createObjectURL(file);
+        audioEl.src = url;
+        audioEl.loop = false;
+        audioEl.controls = true;
+        audioEl.playsInline = true;
+        audioEl.style.display = "block";
+
+        if (!mediaElementSource) {
+          mediaElementSource = audioContext.createMediaElementSource(audioEl);
+          mediaElementSource.connect(analyser);
+          mediaElementSource.connect(audioContext.destination);
+        }
+
+        await audioEl.play();
+
+        sourceMode = "file";
+        begin();
+      } catch (err) {
+        showError(
+          "音声ファイルを開始できませんでした。\n" +
+          "mp3 / wav / m4a など別ファイルで試してください。\n\n" +
+          String(err.name ? err.name + ": " : "") + String(err.message || err)
+        );
+      }
+    }
+
+    function startDemo() {
+      clearError();
+      stopInputsOnly();
+      sourceMode = "demo";
+      audioEl.style.display = "none";
+      begin();
+    }
+
+    function begin() {
+      started = true;
+      paused = false;
+      startPanel.style.display = "none";
+      startTime = performance.now();
+      lastSampleTime = 0;
+      elapsed = 0;
+      clearHistory();
+      requestWakeLockSafe();
+    }
+
+    function stopInputsOnly() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+
+      if (streamSource) {
+        try { streamSource.disconnect(); } catch (_) {}
+        streamSource = null;
+      }
+
+      if (audioEl && audioEl.src) {
+        audioEl.pause();
+        try { URL.revokeObjectURL(audioEl.src); } catch (_) {}
+        audioEl.removeAttribute("src");
+        audioEl.load();
+      }
+    }
+
+    function clearHistory() {
+      maxHistory = sampleFps * timeSpanSeconds;
+      history = [];
+      smoothedRms = 0;
+      smoothedPeak = 0;
+      smoothedBass = 0;
+      smoothedMid = 0;
+      smoothedTreble = 0;
+    }
+
+    function setNextSpan() {
+      timeSpanIndex = (timeSpanIndex + 1) % timeSpanOptions.length;
+      timeSpanSeconds = timeSpanOptions[timeSpanIndex];
+      maxHistory = sampleFps * timeSpanSeconds;
+
+      while (history.length > maxHistory) history.shift();
+
+      document.querySelector("#btnSpan .smallText").textContent = `${timeSpanSeconds}s`;
+    }
+
+    function loop(now) {
+      if (started && !paused) {
+        updateAudio(now);
+      }
+
+      draw(now);
+      requestAnimationFrame(loop);
+    }
+
+    function updateAudio(now) {
+      elapsed = (now - startTime) / 1000;
+
+      if (now - lastSampleTime < 1000 / sampleFps) return;
+      lastSampleTime = now;
+
+      let sample;
+      if (sourceMode === "demo") {
+        sample = makeDemoSample();
+      } else {
+        sample = makeAudioSample();
+      }
+
+      if (!sample) return;
+
+      history.push(sample);
+      while (history.length > maxHistory) history.shift();
+    }
+
+    function makeAudioSample() {
+      if (!analyser || !freqData || !timeData) return null;
+
+      analyser.getByteFrequencyData(freqData);
+      analyser.getByteTimeDomainData(timeData);
+
+      const metrics = calculateMetrics(timeData, freqData);
+      smoothMetrics(metrics);
+
+      return {
+        t: elapsed,
+        rms: smoothedRms,
+        peak: smoothedPeak,
+        bass: smoothedBass,
+        mid: smoothedMid,
+        treble: smoothedTreble,
+        bands: makeBands(freqData)
+      };
+    }
+
+    function makeDemoSample() {
+      demoPhase += 1 / sampleFps;
+      if (!timeData) timeData = new Uint8Array(fftSize);
+      if (!freqData) freqData = new Uint8Array(fftSize / 2);
+
+      const kick = Math.pow(Math.max(0, Math.sin(demoPhase * 3.2)), 5);
+      const slow = 0.5 + 0.5 * Math.sin(demoPhase * 0.8);
+      const high = 0.5 + 0.5 * Math.sin(demoPhase * 8.2 + Math.sin(demoPhase));
+
+      for (let i = 0; i < timeData.length; i++) {
+        const x = i / timeData.length;
+        const v =
+          Math.sin((x * Math.PI * 2 * (3 + kick * 2)) + demoPhase * 9) * (0.25 + kick * 0.45) +
+          Math.sin((x * Math.PI * 2 * 23) + demoPhase * 21) * high * 0.10 +
+          (Math.random() - 0.5) * 0.04;
+        timeData[i] = Math.max(0, Math.min(255, Math.floor(128 + v * 105)));
+      }
+
+      for (let i = 0; i < freqData.length; i++) {
+        const x = i / freqData.length;
+        const v =
+          26 +
+          190 * Math.exp(-Math.pow((x - 0.045 - kick * 0.012) / 0.036, 2)) * kick +
+          116 * Math.exp(-Math.pow((x - 0.18 - slow * 0.035) / 0.085, 2)) * slow +
+          84 * Math.exp(-Math.pow((x - 0.60) / 0.17, 2)) * high;
+        freqData[i] = Math.max(0, Math.min(255, Math.floor(v + (Math.random() - 0.5) * 13)));
+      }
+
+      const metrics = calculateMetrics(timeData, freqData);
+      smoothMetrics(metrics);
+
+      return {
+        t: elapsed,
+        rms: smoothedRms,
+        peak: smoothedPeak,
+        bass: smoothedBass,
+        mid: smoothedMid,
+        treble: smoothedTreble,
+        bands: makeBands(freqData)
+      };
+    }
+
+    function calculateMetrics(tData, fData) {
+      let sum = 0;
+      let peak = 0;
+
+      for (let i = 0; i < tData.length; i++) {
+        const v = (tData[i] - 128) / 128;
+        sum += v * v;
+        peak = Math.max(peak, Math.abs(v));
+      }
+
+      const rms = Math.sqrt(sum / tData.length);
+      const bass = bandAverage(fData, 20, 160) / 255;
+      const mid = bandAverage(fData, 400, 2200) / 255;
+      const treble = bandAverage(fData, 3200, 9000) / 255;
+
+      return { rms, peak, bass, mid, treble };
+    }
+
+    function smoothMetrics(m) {
+      smoothedRms = lerp(smoothedRms, m.rms, 0.22);
+      smoothedPeak = lerp(smoothedPeak, m.peak, 0.18);
+      smoothedBass = lerp(smoothedBass, m.bass, 0.15);
+      smoothedMid = lerp(smoothedMid, m.mid, 0.12);
+      smoothedTreble = lerp(smoothedTreble, m.treble, 0.10);
+    }
+
+    function bandAverage(data, lowHz, highHz) {
+      const sampleRate = audioContext ? audioContext.sampleRate : 44100;
+      const nyquist = sampleRate / 2;
+      const start = Math.max(0, Math.floor((lowHz / nyquist) * data.length));
+      const end = Math.min(data.length - 1, Math.ceil((highHz / nyquist) * data.length));
+
+      let sum = 0;
+      let count = 0;
+      for (let i = start; i <= end; i++) {
+        sum += data[i];
+        count++;
+      }
+      return count ? sum / count : 0;
+    }
+
+    function makeBands(fData) {
+      const out = new Float32Array(bands);
+      const usable = Math.floor(fData.length * 0.72);
+
+      for (let b = 0; b < bands; b++) {
+        const start = Math.floor(Math.pow(b / bands, 1.65) * usable);
+        const end = Math.max(start + 1, Math.floor(Math.pow((b + 1) / bands, 1.65) * usable));
+        let sum = 0;
+        let count = 0;
+
+        for (let i = start; i < Math.min(end, fData.length); i++) {
+          sum += fData[i];
+          count++;
+        }
+
+        const value = count ? sum / count / 255 : 0;
+        out[b] = Math.pow(value, 0.72);
+      }
+
+      return out;
+    }
+
+    function draw(now) {
+      drawBackground();
+
+      const topPad = 58;
+      const bottomPad = controlsVisible ? 78 : 18;
+      const gap = 10;
+      const innerX = 12;
+      const innerW = width - 24;
+
+      const availableH = height - topPad - bottomPad;
+      const oscH = Math.max(116, availableH * 0.26);
+      const specH = Math.max(170, availableH * 0.42);
+      const envH = Math.max(130, availableH - oscH - specH - gap * 2);
+
+      const oscY = topPad;
+      const specY = oscY + oscH + gap;
+      const envY = specY + specH + gap;
+
+      drawPanel(innerX, oscY, innerW, oscH, "CURRENT WAVEFORM", "生波形 約20〜50ms");
+      drawOscilloscope(innerX, oscY, innerW, oscH);
+
+      drawPanel(innerX, specY, innerW, specH, "SPECTROGRAM", `周波数の時間変化 / ${timeSpanSeconds}s`);
+      drawSpectrogram(innerX, specY, innerW, specH);
+
+      drawPanel(innerX, envY, innerW, envH, "TIMELINE", `音量・低音・中音・高音 / ${timeSpanSeconds}s`);
+      drawEnvelopeTimeline(innerX, envY, innerW, envH);
+
+      drawMeters();
+      updateHud();
+    }
+
+    function drawBackground() {
+      const g = ctx.createLinearGradient(0, 0, 0, height);
+      g.addColorStop(0, "#070914");
+      g.addColorStop(0.55, "#05060a");
+      g.addColorStop(1, "#080713");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.save();
+      ctx.globalAlpha = 0.15;
+      const rg = ctx.createRadialGradient(width * 0.5, height * 0.15, 0, width * 0.5, height * 0.15, width * 0.65);
+      rg.addColorStop(0, "rgba(80,130,255,0.42)");
+      rg.addColorStop(1, "rgba(80,130,255,0)");
+      ctx.fillStyle = rg;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+    }
+
+    function drawPanel(x, y, w, h, title, subtitle) {
+      roundRect(x, y, w, h, 18, "rgba(8,10,18,0.54)", "rgba(255,255,255,0.13)");
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.letterSpacing = "0.08em";
+      ctx.fillText(title, x + 14, y + 20);
+
+      ctx.fillStyle = "rgba(255,255,255,0.48)";
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillText(subtitle, x + 14, y + 36);
+      ctx.restore();
+    }
+
+    function drawOscilloscope(x, y, w, h) {
+      const plotX = x + 12;
+      const plotY = y + 46;
+      const plotW = w - 24;
+      const plotH = h - 58;
+      const midY = plotY + plotH / 2;
+
+      drawGrid(plotX, plotY, plotW, plotH, 6, 4);
+
+      ctx.save();
+
+      ctx.strokeStyle = "rgba(255,255,255,0.23)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(plotX, midY);
+      ctx.lineTo(plotX + plotW, midY);
+      ctx.stroke();
+
+      if (timeData) {
+        ctx.lineWidth = lowPower ? 2 : 1.6;
+        ctx.strokeStyle = "rgba(151,220,255,0.95)";
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = "rgba(151,220,255,0.46)";
+        ctx.beginPath();
+
+        for (let i = 0; i < timeData.length; i++) {
+          const xx = plotX + (i / (timeData.length - 1)) * plotW;
+          const v = (timeData[i] - 128) / 128;
+          const yy = midY + v * plotH * 0.47;
+
+          if (i === 0) ctx.moveTo(xx, yy);
+          else ctx.lineTo(xx, yy);
+        }
+
+        ctx.stroke();
+
+        drawText(`${Math.round(smoothedPeak * 100)}% peak`, plotX + plotW - 86, plotY + 16, "rgba(255,255,255,0.62)");
+      } else {
+        drawText("入力待ち", plotX + 10, midY - 6, "rgba(255,255,255,0.42)");
+      }
+
+      ctx.restore();
+    }
+
+    function drawSpectrogram(x, y, w, h) {
+      const plotX = x + 12;
+      const plotY = y + 46;
+      const plotW = w - 24;
+      const plotH = h - 58;
+
+      drawGrid(plotX, plotY, plotW, plotH, 6, 4);
+
+      if (!history.length) {
+        drawText("周波数履歴なし", plotX + 10, plotY + 24, "rgba(255,255,255,0.42)");
+        return;
+      }
+
+      const colW = plotW / maxHistory;
+      const startIndex = Math.max(0, history.length - maxHistory);
+      const visible = history.slice(startIndex);
+      const offset = maxHistory - visible.length;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(plotX, plotY, plotW, plotH);
+      ctx.clip();
+
+      for (let i = 0; i < visible.length; i++) {
+        const sample = visible[i];
+        const xx = plotX + (offset + i) * colW;
+        const bandsArr = sample.bands;
+        const bandH = plotH / bandsArr.length;
+
+        for (let b = 0; b < bandsArr.length; b++) {
+          const value = bandsArr[b];
+          const yy = plotY + plotH - (b + 1) * bandH;
+          ctx.fillStyle = heatColor(value);
+          ctx.fillRect(xx, yy, Math.max(1, colW + 0.6), Math.ceil(bandH + 0.4));
+        }
+      }
+
+      ctx.restore();
+
+      drawTimeAxis(plotX, plotY + plotH, plotW);
+      drawText("low", plotX + 4, plotY + plotH - 6, "rgba(255,255,255,0.50)");
+      drawText("high", plotX + 4, plotY + 12, "rgba(255,255,255,0.50)");
+    }
+
+    function drawEnvelopeTimeline(x, y, w, h) {
+      const plotX = x + 12;
+      const plotY = y + 46;
+      const plotW = w - 24;
+      const plotH = h - 58;
+
+      drawGrid(plotX, plotY, plotW, plotH, 6, 4);
+
+      if (!history.length) {
+        drawText("音量履歴なし", plotX + 10, plotY + 24, "rgba(255,255,255,0.42)");
+        return;
+      }
+
+      drawTimeAxis(plotX, plotY + plotH, plotW);
+
+      drawSeries(plotX, plotY, plotW, plotH, "rms", "rgba(132,224,255,0.96)", 2.2, 4.8);
+      drawSeries(plotX, plotY, plotW, plotH, "bass", "rgba(190,165,255,0.70)", 1.6, 1.0);
+      drawSeries(plotX, plotY, plotW, plotH, "mid", "rgba(255,255,255,0.50)", 1.4, 1.0);
+      drawSeries(plotX, plotY, plotW, plotH, "treble", "rgba(255,205,134,0.58)", 1.3, 1.0);
+
+      drawLegend(plotX + 8, plotY + 14, [
+        ["RMS", "rgba(132,224,255,0.96)"],
+        ["BASS", "rgba(190,165,255,0.70)"],
+        ["MID", "rgba(255,255,255,0.50)"],
+        ["TREBLE", "rgba(255,205,134,0.58)"]
+      ]);
+    }
+
+    function drawSeries(plotX, plotY, plotW, plotH, key, color, lineWidth, gain) {
+      const visible = history.slice(Math.max(0, history.length - maxHistory));
+      const offset = maxHistory - visible.length;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(plotX, plotY, plotW, plotH);
+      ctx.clip();
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.shadowBlur = key === "rms" ? 10 : 0;
+      ctx.shadowColor = color;
+      ctx.beginPath();
+
+      for (let i = 0; i < visible.length; i++) {
+        const v = Math.min(1, visible[i][key] * gain);
+        const xx = plotX + ((offset + i) / Math.max(1, maxHistory - 1)) * plotW;
+        const yy = plotY + plotH - v * plotH;
+
+        if (i === 0) ctx.moveTo(xx, yy);
+        else ctx.lineTo(xx, yy);
+      }
+
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawMeters() {
+      const boxW = Math.min(440, width - 24);
+      const boxH = 54;
+      const x = 12;
+      const y = height - (controlsVisible ? 140 : 72);
+
+      if (y < height * 0.55) return;
+
+      roundRect(x, y, boxW, boxH, 16, "rgba(8,10,18,0.48)", "rgba(255,255,255,0.10)");
+
+      const items = [
+        ["RMS", Math.min(1, smoothedRms * 4.8), "rgba(132,224,255,0.95)"],
+        ["PEAK", smoothedPeak, "rgba(255,255,255,0.78)"],
+        ["BASS", smoothedBass, "rgba(190,165,255,0.78)"],
+        ["MID", smoothedMid, "rgba(255,255,255,0.56)"],
+        ["HIGH", smoothedTreble, "rgba(255,205,134,0.70)"]
+      ];
+
+      const gap = 8;
+      const itemW = (boxW - 24 - gap * (items.length - 1)) / items.length;
+
+      for (let i = 0; i < items.length; i++) {
+        const [label, value, color] = items[i];
+        const ix = x + 12 + i * (itemW + gap);
+        const iy = y + 14;
+        drawText(label, ix, iy, "rgba(255,255,255,0.54)", "700 9px system-ui, sans-serif");
+
+        ctx.fillStyle = "rgba(255,255,255,0.12)";
+        roundRectPath(ix, iy + 9, itemW, 8, 999);
+        ctx.fill();
+
+        ctx.fillStyle = color;
+        roundRectPath(ix, iy + 9, itemW * Math.max(0, Math.min(1, value)), 8, 999);
+        ctx.fill();
+
+        drawText(String(Math.round(value * 100)), ix, iy + 34, "rgba(255,255,255,0.64)", "10px system-ui, sans-serif");
+      }
+    }
+
+    function drawGrid(x, y, w, h, cols, rows) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1;
+
+      for (let i = 1; i < cols; i++) {
+        const xx = x + (w * i) / cols;
+        ctx.beginPath();
+        ctx.moveTo(xx, y);
+        ctx.lineTo(xx, y + h);
+        ctx.stroke();
+      }
+
+      for (let i = 1; i < rows; i++) {
+        const yy = y + (h * i) / rows;
+        ctx.beginPath();
+        ctx.moveTo(x, yy);
+        ctx.lineTo(x + w, yy);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function drawTimeAxis(x, y, w) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.44)";
+      ctx.font = "10px system-ui, sans-serif";
+
+      const labels = 4;
+      for (let i = 0; i <= labels; i++) {
+        const p = i / labels;
+        const sec = Math.round(-timeSpanSeconds + timeSpanSeconds * p);
+        const label = i === labels ? "now" : `${sec}s`;
+        const xx = x + w * p;
+        ctx.fillText(label, Math.max(x, Math.min(x + w - 28, xx - 10)), y + 14);
+      }
+
+      ctx.restore();
+    }
+
+    function drawLegend(x, y, items) {
+      ctx.save();
+      let offset = 0;
+      ctx.font = "700 9px system-ui, sans-serif";
+
+      for (const [label, color] of items) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x + offset, y - 7, 12, 3);
+        ctx.fillStyle = "rgba(255,255,255,0.58)";
+        ctx.fillText(label, x + offset + 16, y);
+        offset += label.length * 7 + 34;
+      }
+
+      ctx.restore();
+    }
+
+    function heatColor(v) {
+      v = Math.max(0, Math.min(1, v));
+      const hue = 235 - v * 210;
+      const sat = 72 + v * 20;
+      const light = 8 + Math.pow(v, 0.65) * 62;
+      const alpha = 0.20 + Math.pow(v, 0.8) * 0.80;
+      return `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
+    }
+
+    function roundRect(x, y, w, h, r, fill, stroke) {
+      ctx.save();
+      roundRectPath(x, y, w, h, r);
+      if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fill();
+      }
+      if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function roundRectPath(x, y, w, h, r) {
+      const rr = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.lineTo(x + w - rr, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+      ctx.lineTo(x + w, y + h - rr);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+      ctx.lineTo(x + rr, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+      ctx.lineTo(x, y + rr);
+      ctx.quadraticCurveTo(x, y, x + rr, y);
+      ctx.closePath();
+    }
+
+    function drawText(text, x, y, color, font) {
+      ctx.save();
+      ctx.fillStyle = color || "rgba(255,255,255,0.8)";
+      ctx.font = font || "11px system-ui, sans-serif";
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function updateHud() {
+      miniFill.style.width = `${Math.round(Math.min(1, smoothedRms * 4.8) * 100)}%`;
+      const state = paused ? "PAUSED" : sourceMode.toUpperCase();
+      const secs = sourceMode === "file" && audioEl.duration ? audioEl.currentTime : elapsed;
+      statusEl.innerHTML = `<strong>${state}</strong> span: ${timeSpanSeconds}s / t: ${formatTime(secs)} / rms: ${Math.round(Math.min(1, smoothedRms * 4.8) * 100)}%`;
+      document.querySelector("#btnSpan .smallText").textContent = `${timeSpanSeconds}s`;
+      document.getElementById("btnPause").textContent = paused ? "RESUME" : "PAUSE";
+    }
+
+    function formatTime(seconds) {
+      if (!Number.isFinite(seconds)) seconds = 0;
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m}:${String(s).padStart(2, "0")}`;
+    }
+
+    function toggleControls() {
+      controlsVisible = !controlsVisible;
+      controls.classList.toggle("hidden", !controlsVisible);
+    }
+
+    function openMenu() {
+      startPanel.style.display = "grid";
+      controlsVisible = true;
+      controls.classList.remove("hidden");
+      renderEnv();
+    }
+
+    function togglePause() {
+      paused = !paused;
+      if (sourceMode === "file") {
+        if (paused) audioEl.pause();
+        else audioEl.play().catch(() => {});
+      }
+    }
+
+    function showError(message) {
+      errorEl.textContent = message;
+    }
+
+    function clearError() {
+      errorEl.textContent = "";
+    }
+
+    async function requestWakeLockSafe() {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLock = await navigator.wakeLock.request("screen");
+        }
+      } catch (_) {}
+    }
+
+    document.getElementById("micButton").addEventListener("click", startMic);
+    document.getElementById("demoButton").addEventListener("click", startDemo);
+    document.getElementById("fileInput").addEventListener("change", event => {
+      const file = event.target.files && event.target.files[0];
+      startAudioFile(file);
+    });
+
+    document.getElementById("btnPause").addEventListener("click", event => {
+      event.stopPropagation();
+      togglePause();
+    });
+
+    document.getElementById("btnSpan").addEventListener("click", event => {
+      event.stopPropagation();
+      setNextSpan();
+    });
+
+    document.getElementById("btnClear").addEventListener("click", event => {
+      event.stopPropagation();
+      clearHistory();
+    });
+
+    document.getElementById("btnFull").addEventListener("click", event => {
+      event.stopPropagation();
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+    });
+
+    document.getElementById("btnSave").addEventListener("click", event => {
+      event.stopPropagation();
+      const link = document.createElement("a");
+      link.download = "audio-timeline-analyzer.png";
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    });
+
+    document.getElementById("btnMenu").addEventListener("click", event => {
+      event.stopPropagation();
+      openMenu();
+    });
+
+    document.getElementById("tapLayer").addEventListener("click", () => {
+      if (started) toggleControls();
+    });
+
+    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", () => {
+      setTimeout(resize, 360);
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && audioContext) {
+        audioContext.resume().catch(() => {});
+        requestWakeLockSafe();
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
