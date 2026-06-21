@@ -78,9 +78,9 @@
 
   <script>
     const OWNER = "sawayamakouji";
- const REPO = "tex";
-const BRANCH = "main";
-const TARGET_DIR = "works";
+    const REPO = "tex";
+    const BRANCH = "main";
+    const TARGET_DIR = "works";
 
     const app = document.getElementById("app");
 
@@ -88,6 +88,32 @@ const TARGET_DIR = "works";
       return fileName
         .replace(/\.html$/i, "")
         .replace(/[-_]/g, " ");
+    }
+
+    function showMessage(className, message) {
+      const box = document.createElement("div");
+      box.className = className;
+      box.textContent = message;
+      app.replaceChildren(box);
+    }
+
+    function createFileCard(file) {
+      const link = document.createElement("a");
+      link.className = "card";
+      link.href = encodeURI(`./${file.path}`);
+
+      const title = document.createElement("div");
+      title.className = "title";
+      title.textContent = formatTitle(file.name);
+
+      const path = document.createElement("div");
+      path.className = "path";
+      path.textContent = file.path;
+
+      link.appendChild(title);
+      link.appendChild(path);
+
+      return link;
     }
 
     async function loadLinks() {
@@ -103,6 +129,10 @@ const TARGET_DIR = "works";
 
         const items = await response.json();
 
+        if (!Array.isArray(items)) {
+          throw new Error("GitHub API response is not a directory listing.");
+        }
+
         const htmlFiles = items
           .filter(item => item.type === "file")
           .filter(item => item.name.toLowerCase().endsWith(".html"))
@@ -110,31 +140,24 @@ const TARGET_DIR = "works";
           .sort((a, b) => a.name.localeCompare(b.name, "ja"));
 
         if (htmlFiles.length === 0) {
-          app.innerHTML = `<div class="empty">${TARGET_DIR} フォルダにHTMLファイルがありません。</div>`;
+          showMessage("empty", `${TARGET_DIR} フォルダにHTMLファイルがありません。`);
           return;
         }
 
-        app.innerHTML = `
-          <div class="list">
-            ${htmlFiles.map(file => {
-              const href = `./${file.path}`;
-              const title = formatTitle(file.name);
+        const list = document.createElement("div");
+        list.className = "list";
 
-              return `
-                <a class="card" href="${href}">
-                  <div class="title">${title}</div>
-                  <div class="path">${file.path}</div>
-                </a>
-              `;
-            }).join("")}
-          </div>
-        `;
+        for (const file of htmlFiles) {
+          const card = createFileCard(file);
+          list.appendChild(card);
+        }
+
+        app.replaceChildren(list);
       } catch (error) {
-        app.innerHTML = `
-          <div class="error">
-            リンク集を読み込めませんでした。OWNER、REPO、BRANCH、TARGET_DIRを確認してください。
-          </div>
-        `;
+        showMessage(
+          "error",
+          "リンク集を読み込めませんでした。OWNER、REPO、BRANCH、TARGET_DIRを確認してください。"
+        );
         console.error(error);
       }
     }
