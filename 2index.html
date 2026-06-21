@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HTMLリンク集</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 820px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #f7f7f7;
+      color: #222;
+      line-height: 1.7;
+    }
+
+    h1 {
+      margin-bottom: 4px;
+      font-size: 28px;
+    }
+
+    .note {
+      color: #666;
+      margin-bottom: 24px;
+    }
+
+    .list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .card {
+      display: block;
+      padding: 16px 18px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fff;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .card:hover {
+      border-color: #999;
+      background: #fafafa;
+    }
+
+    .title {
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .path {
+      margin-top: 4px;
+      color: #777;
+      font-size: 13px;
+      word-break: break-all;
+    }
+
+    .empty,
+    .error {
+      padding: 16px;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+
+    .error {
+      color: #b00020;
+    }
+  </style>
+</head>
+<body>
+  <h1>HTMLリンク集</h1>
+  <p class="note">指定フォルダ内のHTMLファイルを自動で表示します。</p>
+
+  <div id="app">読み込み中...</div>
+
+  <script>
+    const OWNER = "あなたのGitHubユーザー名";
+    const REPO = "リポジトリ名";
+    const BRANCH = "main";
+    const TARGET_DIR = "works";
+
+    const app = document.getElementById("app");
+
+    function formatTitle(fileName) {
+      return fileName
+        .replace(/\.html$/i, "")
+        .replace(/[-_]/g, " ");
+    }
+
+    async function loadLinks() {
+      const apiUrl =
+        `https://api.github.com/repos/${OWNER}/${REPO}/contents/${TARGET_DIR}?ref=${BRANCH}`;
+
+      try {
+        const response = await fetch(apiUrl);
+
+        if (!response.ok) {
+          throw new Error(`GitHub API error: ${response.status}`);
+        }
+
+        const items = await response.json();
+
+        const htmlFiles = items
+          .filter(item => item.type === "file")
+          .filter(item => item.name.toLowerCase().endsWith(".html"))
+          .filter(item => item.name.toLowerCase() !== "index.html")
+          .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+
+        if (htmlFiles.length === 0) {
+          app.innerHTML = `<div class="empty">${TARGET_DIR} フォルダにHTMLファイルがありません。</div>`;
+          return;
+        }
+
+        app.innerHTML = `
+          <div class="list">
+            ${htmlFiles.map(file => {
+              const href = `./${file.path}`;
+              const title = formatTitle(file.name);
+
+              return `
+                <a class="card" href="${href}">
+                  <div class="title">${title}</div>
+                  <div class="path">${file.path}</div>
+                </a>
+              `;
+            }).join("")}
+          </div>
+        `;
+      } catch (error) {
+        app.innerHTML = `
+          <div class="error">
+            リンク集を読み込めませんでした。OWNER、REPO、BRANCH、TARGET_DIRを確認してください。
+          </div>
+        `;
+        console.error(error);
+      }
+    }
+
+    loadLinks();
+  </script>
+</body>
+</html>
